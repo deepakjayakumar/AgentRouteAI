@@ -68,6 +68,11 @@ st.set_page_config(page_title="Agentic AI for Delivery Execution", page_icon="\U
 
 st.markdown("""
 <style>
+
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stDeployButton {display: none;}
     .main-header {
         background: white;
         padding: 1.5rem 2rem;
