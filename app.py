@@ -388,7 +388,7 @@ def generate_route_plan_local(instruction, orders_df, stores_df, drivers_df, wh_
         try:
             import google.generativeai as genai
             genai.configure(api_key=GOOGLE_API_KEY)
-            model = genai.GenerativeModel("gemini-2.0-flash")
+            model = genai.GenerativeModel("gemini-3-flash-preview")
             summary_prompt = (
                 "You are a senior logistics analyst for Coca-Cola. Based on this route plan summary, write: "
                 "1) A 3-sentence executive summary assessing overall efficiency and fulfillment. "
