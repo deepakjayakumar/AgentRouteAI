@@ -423,17 +423,27 @@ def generate_route_plan_local(instruction, orders_df, stores_df, drivers_df, wh_
         drvrs = wh_drivers.get(wid, [])
         for driver in drvrs:
             if driver["route"]:
-                route_stores = [stp["store_name"] for stp in driver["route"]]
                 agent_log.append(f"- **{driver['name']}** starting from {w['name']}:")
-                prev = w["name"]
+                cumulative_load = 0.0
+                cumulative_time = LOAD_TIME
+                cumulative_dist = 0.0
                 for stp in driver["route"]:
+                    cumulative_load += stp["weight_kg"]
+                    cumulative_dist += stp["leg_mi"]
+                    cumulative_time += stp["leg_hrs"] + UNLOAD_TIME
+                    remaining_capacity = round(driver["capacity_kg"] - cumulative_load, 1)
+                    remaining_time = round(driver["hours"] - cumulative_time, 2)
                     agent_log.append(f"  → Nearest feasible stop: **{stp['store_name']}** ({stp['city']}) — "
-                                     f"{stp['leg_mi']} mi away, {stp['total_qty']} units/{stp['weight_kg']}kg. "
-                                     f"Remaining capacity: {round(driver['capacity_kg'] - driver['load_kg'], 1)}kg, "
-                                     f"time budget after this: {round(driver['hours'] - driver['time_used'], 2)}h.")
-                    prev = stp["store_name"]
-                agent_log.append(f"  ← Return to warehouse. Total: {driver['distance']} mi, {driver['time_used']}h, "
-                                 f"{round(driver['load_kg'], 1)}kg ({round(driver['load_kg']/driver['capacity_kg']*100)}% loaded).")
+                                     f"{stp['leg_mi']} mi from previous point, {stp['total_qty']} units/{stp['weight_kg']}kg. "
+                                     f"Remaining capacity: {remaining_capacity}kg, "
+                                     f"time budget after this: {remaining_time}h.")
+                ret_dist = round(road_dist(driver["route"][-1]["lat"], driver["route"][-1]["lon"], w["lat"], w["lon"]), 1)
+                ret_time = drive_hrs(ret_dist)
+                cumulative_dist += ret_dist
+                cumulative_time += ret_time
+                agent_log.append(f"  ← Return to warehouse ({ret_dist} mi, {ret_time}h). "
+                                 f"Trip total: {round(cumulative_dist, 1)} mi, {round(cumulative_time, 2)}h, "
+                                 f"{round(cumulative_load, 1)}kg ({round(cumulative_load/driver['capacity_kg']*100)}% loaded).")
             else:
                 agent_log.append(f"- **{driver['name']}**: No feasible stops could be assigned (capacity/time constraints).")
 
