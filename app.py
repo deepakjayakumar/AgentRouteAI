@@ -73,6 +73,9 @@ st.markdown("""
     footer {visibility: hidden;}
     header {visibility: hidden;}
     .stDeployButton {display: none;}
+    ._profileContainer_gzau3_53
+    {display: none;
+    }
     .main-header {
         background: white;
         padding: 1.5rem 2rem;
