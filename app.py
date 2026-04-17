@@ -385,31 +385,72 @@ def generate_route_plan_local(instruction, orders_df, stores_df, drivers_df, wh_
 
     llm_summary = ""
     agent_log = []
-    agent_log.append("## Agent Log")
-    agent_log.append("Here's what I did to generate your route plan:\n")
-    agent_log.append(f"**Step 1 — Load Data:** Fetched {len(orders_df)} pending orders, {len(stores_df)} stores, {len(drivers_df)} drivers, and {len(wh_map)} warehouses.")
-    
-    store_count_by_wh = {wid: len(stops) for wid, stops in wh_stops.items()}
-    driver_count_by_wh = {wid: len(drvs) for wid, drvs in wh_drivers.items()}
-    wh_summary = ", ".join([f"{wh_map[wid]['name']} ({store_count_by_wh.get(wid, 0)} stores, {driver_count_by_wh.get(wid, 0)} drivers)" for wid in sorted(wh_map.keys())])
-    agent_log.append(f"**Step 2 — Assign Stores to Warehouses:** Mapped each store to its nearest warehouse using road distance (haversine × 1.3). Result: {wh_summary}.")
-    
-    agent_log.append(f"**Step 3 — Sort Stops:** Within each warehouse, sorted stores by proximity (nearest first) for greedy nearest-neighbor routing.")
-    
-    agent_log.append(f"**Step 4 — Route Optimization:** For each driver, greedily assigned the closest feasible stop considering:")
-    agent_log.append(f"  - Vehicle weight capacity ({WEIGHT_PER_UNIT} kg/unit)")
-    agent_log.append(f"  - Time constraints (drive time + {UNLOAD_TIME}h unload/stop + return trip must fit within driver hours)")
-    agent_log.append(f"  - {LOAD_TIME}h loading time at warehouse before departure")
-    
-    agent_log.append(f"**Step 5 — Results:** {total_orders_assigned}/{len(orders_df)} orders assigned ({fulfillment}% fulfillment), {total_units_assigned} units, {drivers_used}/{total_drivers} drivers used.")
-    
+    agent_log.append("## Agent Thinking Process\n")
+
+    agent_log.append("**Analyzing pending orders...**")
+    order_by_store = orders_df.groupby("STORE_ID").agg({"ORDER_ID": "count", "QUANTITY": "sum"}).reset_index()
+    top_stores = order_by_store.sort_values("QUANTITY", ascending=False).head(3)
+    store_insights = []
+    for _, row in top_stores.iterrows():
+        sname = store_map.get(row["STORE_ID"], {}).get("name", row["STORE_ID"])
+        store_insights.append(f"{sname} ({int(row['QUANTITY'])} units across {int(row['ORDER_ID'])} orders)")
+    agent_log.append(f"Found {len(orders_df)} pending orders totaling {int(orders_df['QUANTITY'].sum())} units across {len(order_by_store)} stores. "
+                     f"Highest demand: {', '.join(store_insights)}.")
+
+    agent_log.append("\n**Evaluating driver fleet...**")
+    for _, d in drivers_df.iterrows():
+        max_range_hrs = float(d["HOURS_AVAILABLE"]) - LOAD_TIME - UNLOAD_TIME
+        max_range_mi = round(max_range_hrs * 55, 1)
+        utilization_potential = round(float(d["VEHICLE_CAPACITY_KG"]) / (orders_df["QUANTITY"].sum() * WEIGHT_PER_UNIT) * 100, 1) if orders_df["QUANTITY"].sum() > 0 else 0
+        agent_log.append(f"- **{d['DRIVER_NAME']}**: {d['VEHICLE_CAPACITY_KG']}kg capacity, {d['HOURS_AVAILABLE']}h available → effective range ~{max_range_mi} mi, "
+                         f"can carry up to {utilization_potential}% of total demand.")
+
+    agent_log.append("\n**Mapping stores to nearest warehouses...**")
+    for wid in sorted(wh_map.keys()):
+        w = wh_map[wid]
+        stops = wh_stops.get(wid, [])
+        if stops:
+            distances = [round(road_dist(w["lat"], w["lon"], s["lat"], s["lon"]), 1) for s in stops]
+            store_names = [s["store_name"] for s in stops]
+            total_wt = sum(s["weight_kg"] for s in stops)
+            agent_log.append(f"- **{w['name']}** ({w['city']}): assigned {len(stops)} stores "
+                             f"[{', '.join(store_names)}], total load {total_wt}kg, "
+                             f"distances range {min(distances)}–{max(distances)} mi.")
+
+    agent_log.append("\n**Building routes using nearest-neighbor heuristic...**")
+    for wid in sorted(wh_map.keys()):
+        w = wh_map[wid]
+        drvrs = wh_drivers.get(wid, [])
+        for driver in drvrs:
+            if driver["route"]:
+                route_stores = [stp["store_name"] for stp in driver["route"]]
+                agent_log.append(f"- **{driver['name']}** starting from {w['name']}:")
+                prev = w["name"]
+                for stp in driver["route"]:
+                    agent_log.append(f"  → Nearest feasible stop: **{stp['store_name']}** ({stp['city']}) — "
+                                     f"{stp['leg_mi']} mi away, {stp['total_qty']} units/{stp['weight_kg']}kg. "
+                                     f"Remaining capacity: {round(driver['capacity_kg'] - driver['load_kg'], 1)}kg, "
+                                     f"time budget after this: {round(driver['hours'] - driver['time_used'], 2)}h.")
+                    prev = stp["store_name"]
+                agent_log.append(f"  ← Return to warehouse. Total: {driver['distance']} mi, {driver['time_used']}h, "
+                                 f"{round(driver['load_kg'], 1)}kg ({round(driver['load_kg']/driver['capacity_kg']*100)}% loaded).")
+            else:
+                agent_log.append(f"- **{driver['name']}**: No feasible stops could be assigned (capacity/time constraints).")
+
     if all_unassigned:
-        unassigned_names = ", ".join([u["store_name"] for u in all_unassigned])
-        agent_log.append(f"**Step 6 — Unassigned:** {len(all_unassigned)} stops could not be assigned due to capacity/time constraints: {unassigned_names}.")
-    else:
-        agent_log.append("**Step 6 — All stops successfully assigned!**")
-    
-    agent_log_text = "\n\n".join(agent_log)
+        agent_log.append("\n**Identifying unassigned stops...**")
+        for u in all_unassigned:
+            nearest_wid = nearest_wh(u["lat"], u["lon"])
+            wh_name = wh_map[nearest_wid]["name"]
+            dist_to_wh = round(road_dist(wh_map[nearest_wid]["lat"], wh_map[nearest_wid]["lon"], u["lat"], u["lon"]), 1)
+            agent_log.append(f"- **{u['store_name']}** ({u['city']}): {u['weight_kg']}kg, {dist_to_wh} mi from {wh_name} — "
+                             f"skipped because all drivers at {wh_name} ran out of capacity or time.")
+
+    agent_log.append(f"\n**Final assessment:** Assigned {total_orders_assigned}/{len(orders_df)} orders ({fulfillment}% fulfillment) "
+                     f"using {drivers_used}/{total_drivers} drivers. "
+                     f"Total units: {total_units_assigned}, unassigned stops: {len(all_unassigned)}.")
+
+    agent_log_text = "\n".join(agent_log)
     return agent_log_text + "\n\n" + plan_text + json_marker
     # if GOOGLE_API_KEY:
     #     try:
