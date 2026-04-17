@@ -10,6 +10,18 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 
+# Hide Streamlit header, footer, and the profile avatar
+hide_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    /* This targets the user profile/identity icon in the bottom right */
+    .st-emotion-cache-1wb593a {display: none !important;}
+    .stAppDeployButton {display: none !important;}
+    </style>
+    """
+st.markdown(hide_style, unsafe_allow_html=True)
 load_dotenv()
 
 SNOWFLAKE_ACCOUNT = os.getenv("SNOWFLAKE_ACCOUNT")
