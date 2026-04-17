@@ -384,29 +384,56 @@ def generate_route_plan_local(instruction, orders_df, stores_df, drivers_df, wh_
     json_marker = "\n<!--DELIVERY_JSON:" + json.dumps(delivery_records) + ":DELIVERY_JSON-->"
 
     llm_summary = ""
-    if GOOGLE_API_KEY:
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=GOOGLE_API_KEY)
-            model = genai.GenerativeModel("gemini-3-flash-preview")
-            summary_prompt = (
-                "You are a senior logistics analyst for Coca-Cola. Based on this route plan summary, write: "
-                "1) A 3-sentence executive summary assessing overall efficiency and fulfillment. "
-                "2) A section titled '## Actionable Recommendations' with 4-5 specific bullet points. "
-                "Return ONLY the summary and recommendations, nothing else. "
-                f"Plan summary: {total_orders_assigned} of {len(orders_df)} orders assigned, "
-                f"{total_units_assigned} units, {drivers_used}/{total_drivers} drivers used, "
-                f"{fulfillment}% fulfillment, {len(all_unassigned)} unassigned stops. "
-                f"User request: {instruction}"
-            )
-            response = model.generate_content(summary_prompt)
-            llm_summary = response.text
-        except Exception:
-            pass
+    agent_log = []
+    agent_log.append("## Agent Log")
+    agent_log.append("Here's what I did to generate your route plan:\n")
+    agent_log.append(f"**Step 1 — Load Data:** Fetched {len(orders_df)} pending orders, {len(stores_df)} stores, {len(drivers_df)} drivers, and {len(wh_map)} warehouses.")
+    
+    store_count_by_wh = {wid: len(stops) for wid, stops in wh_stops.items()}
+    driver_count_by_wh = {wid: len(drvs) for wid, drvs in wh_drivers.items()}
+    wh_summary = ", ".join([f"{wh_map[wid]['name']} ({store_count_by_wh.get(wid, 0)} stores, {driver_count_by_wh.get(wid, 0)} drivers)" for wid in sorted(wh_map.keys())])
+    agent_log.append(f"**Step 2 — Assign Stores to Warehouses:** Mapped each store to its nearest warehouse using road distance (haversine × 1.3). Result: {wh_summary}.")
+    
+    agent_log.append(f"**Step 3 — Sort Stops:** Within each warehouse, sorted stores by proximity (nearest first) for greedy nearest-neighbor routing.")
+    
+    agent_log.append(f"**Step 4 — Route Optimization:** For each driver, greedily assigned the closest feasible stop considering:")
+    agent_log.append(f"  - Vehicle weight capacity ({WEIGHT_PER_UNIT} kg/unit)")
+    agent_log.append(f"  - Time constraints (drive time + {UNLOAD_TIME}h unload/stop + return trip must fit within driver hours)")
+    agent_log.append(f"  - {LOAD_TIME}h loading time at warehouse before departure")
+    
+    agent_log.append(f"**Step 5 — Results:** {total_orders_assigned}/{len(orders_df)} orders assigned ({fulfillment}% fulfillment), {total_units_assigned} units, {drivers_used}/{total_drivers} drivers used.")
+    
+    if all_unassigned:
+        unassigned_names = ", ".join([u["store_name"] for u in all_unassigned])
+        agent_log.append(f"**Step 6 — Unassigned:** {len(all_unassigned)} stops could not be assigned due to capacity/time constraints: {unassigned_names}.")
+    else:
+        agent_log.append("**Step 6 — All stops successfully assigned!**")
+    
+    agent_log_text = "\n\n".join(agent_log)
+    return agent_log_text + "\n\n" + plan_text + json_marker
+    # if GOOGLE_API_KEY:
+    #     try:
+    #         import google.generativeai as genai
+    #         genai.configure(api_key=GOOGLE_API_KEY)
+    #         model = genai.GenerativeModel("gemini-3-flash-preview")
+    #         summary_prompt = (
+    #             "You are a senior logistics analyst for Coca-Cola. Based on this route plan summary, write: "
+    #             "1) A 3-sentence executive summary assessing overall efficiency and fulfillment. "
+    #             "2) A section titled '## Actionable Recommendations' with 4-5 specific bullet points. "
+    #             "Return ONLY the summary and recommendations, nothing else. "
+    #             f"Plan summary: {total_orders_assigned} of {len(orders_df)} orders assigned, "
+    #             f"{total_units_assigned} units, {drivers_used}/{total_drivers} drivers used, "
+    #             f"{fulfillment}% fulfillment, {len(all_unassigned)} unassigned stops. "
+    #             f"User request: {instruction}"
+    #         )
+    #         response = model.generate_content(summary_prompt)
+    #         llm_summary = response.text
+    #     except Exception:
+    #         pass
 
-    if llm_summary:
-        return llm_summary + "\n\n" + plan_text + json_marker
-    return plan_text + json_marker
+    # if llm_summary:
+    #     return llm_summary + "\n\n" + plan_text + json_marker
+    # return plan_text + json_marker
 
 
 def save_delivery_plan(records):
