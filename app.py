@@ -21,7 +21,7 @@ SNOWFLAKE_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA")
 EMAIL_SENDER = os.getenv("EMAIL_SENDER", "")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "deepakjayakumar11@gmail.com")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
 
 @st.cache_resource
@@ -384,10 +384,11 @@ def generate_route_plan_local(instruction, orders_df, stores_df, drivers_df, wh_
     json_marker = "\n<!--DELIVERY_JSON:" + json.dumps(delivery_records) + ":DELIVERY_JSON-->"
 
     llm_summary = ""
-    if OPENAI_API_KEY:
+    if GOOGLE_API_KEY:
         try:
-            import openai
-            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            import google.generativeai as genai
+            genai.configure(api_key=GOOGLE_API_KEY)
+            model = genai.GenerativeModel("gemini-2.0-flash")
             summary_prompt = (
                 "You are a senior logistics analyst for Coca-Cola. Based on this route plan summary, write: "
                 "1) A 3-sentence executive summary assessing overall efficiency and fulfillment. "
@@ -398,12 +399,8 @@ def generate_route_plan_local(instruction, orders_df, stores_df, drivers_df, wh_
                 f"{fulfillment}% fulfillment, {len(all_unassigned)} unassigned stops. "
                 f"User request: {instruction}"
             )
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": summary_prompt}],
-                max_tokens=500,
-            )
-            llm_summary = response.choices[0].message.content
+            response = model.generate_content(summary_prompt)
+            llm_summary = response.text
         except Exception:
             pass
 
